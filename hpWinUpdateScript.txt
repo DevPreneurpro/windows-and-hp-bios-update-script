@@ -1,0 +1,50 @@
+$url = "https://hpia.hpcloud.hp.com/downloads/hpia/hp-hpia-5.1.7.exe"
+$outputFolder = "$HOME\Desktop"
+$outputFile = Join-Path $outputFolder "hp-hpia-5.1.7.exe"
+
+# Download and open HP Image Assistant
+Write-Host "Downloading HP Image Assistant..."
+Invoke-WebRequest -Uri $url -OutFile $outputFile
+Start-Process $outputFile
+
+# Wait for HP Image Assistant to start
+Start-Sleep -Seconds 15
+
+# Check for Windows updates
+Write-Host "Checking for Windows updates..."
+$updateSession = New-Object -ComObject Microsoft.Update.Session
+$updateSearcher = $updateSession.CreateUpdateSearcher()
+
+$searchCriteria = "IsInstalled=0 and Type='Software' and IsHidden=0 and CategoryIDs contains 'e6cf1350-c01b-414d-a61f-263d14d133b4'"
+$importantUpdates = $updateSearcher.Search($searchCriteria)
+
+$searchCriteria = "IsInstalled=0 and Type='Software' and IsHidden=0 and CategoryIDs contains '9482f4b4-e343-43b6-b170-9a65bc822c77'"
+$optionalUpdates = $updateSearcher.Search($searchCriteria)
+
+if (($importantUpdates.Updates.Count -gt 0) -or ($optionalUpdates.Updates.Count -gt 0)) {
+    Write-Host "Updates are available."
+    $updatesToInstall = @()
+
+    # Filter out Windows 11 updates
+    $allUpdates = $importantUpdates.Updates + $optionalUpdates.Updates
+    foreach ($update in $allUpdates) {
+        if ($update.Title -notmatch "Windows 11") {
+            $updatesToInstall += $update
+        }
+    }
+
+    if ($updatesToInstall.Count -gt 0) {
+        Write-Host "Installing updates..."
+        $downloader = $updateSession.CreateUpdateDownloader()
+        $downloader.Updates = $updatesToInstall
+        $downloader.Download()
+        $installer = $updateSession.CreateUpdateInstaller()
+        $installer.Updates = $updatesToInstall
+        $installationResult = $installer.Install()
+        Write-Host "Installation result: $($installationResult.ResultCode)"
+    } else {
+        Write-Host "No applicable updates found."
+    }
+} else {
+    Write-Host "Windows is up to date."
+}
