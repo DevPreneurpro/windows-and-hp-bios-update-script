@@ -1,50 +1,84 @@
-$url = "https://hpia.hpcloud.hp.com/downloads/hpia/hp-hpia-5.1.7.exe"
-$outputFolder = "$HOME\Desktop"
-$outputFile = Join-Path $outputFolder "hp-hpia-5.1.7.exe"
 
-# Download and open HP Image Assistant
-Write-Host "Downloading HP Image Assistant..."
-Invoke-WebRequest -Uri $url -OutFile $outputFile
-Start-Process $outputFile
+# Define paths for output folders and files
+$outputFolder = "$HOME\\Desktop"
+$padtZipFile = Join-Path $outputFolder "PSAppDeployToolkit_v3.8.4.zip"
+$padtFolder = Join-Path $outputFolder "PSAppDeployToolkit"
+$hpiaFolder = Join-Path $outputFolder "HPIA"
 
-# Wait for HP Image Assistant to start
-Start-Sleep -Seconds 15
+# Download and install the PowerShell App Deployment Toolkit
+Write-Host "Downloading PowerShell App Deployment Toolkit..."
+$url = "<https://github.com/PSAppDeployToolkit/PSAppDeployToolkit/releases/download/3.8.4/PSAppDeployToolkit_v3.8.4.zip>"
+Invoke-WebRequest -Uri $url -OutFile $padtZipFile
 
-# Check for Windows updates
-Write-Host "Checking for Windows updates..."
-$updateSession = New-Object -ComObject Microsoft.Update.Session
-$updateSearcher = $updateSession.CreateUpdateSearcher()
+Write-Host "Unblocking PowerShell App Deployment Toolkit..."
+Unblock-File -Path $padtZipFile
 
-$searchCriteria = "IsInstalled=0 and Type='Software' and IsHidden=0 and CategoryIDs contains 'e6cf1350-c01b-414d-a61f-263d14d133b4'"
-$importantUpdates = $updateSearcher.Search($searchCriteria)
+Write-Host "Extracting PowerShell App Deployment Toolkit..."
+Expand-Archive -Path $padtZipFile -DestinationPath $padtFolder
 
-$searchCriteria = "IsInstalled=0 and Type='Software' and IsHidden=0 and CategoryIDs contains '9482f4b4-e343-43b6-b170-9a65bc822c77'"
-$optionalUpdates = $updateSearcher.Search($searchCriteria)
+Write-Host "Copying AppDeployToolkit and Files folders to HPIA folder..."
+Copy-Item -Path "$padtFolder\\Toolkit\\AppDeployToolkit" -Destination "$hpiaFolder\\AppDeployToolkit" -Recurse
+Copy-Item -Path "$padtFolder\\Toolkit\\Files" -Destination "$hpiaFolder\\Files"
 
-if (($importantUpdates.Updates.Count -gt 0) -or ($optionalUpdates.Updates.Count -gt 0)) {
-    Write-Host "Updates are available."
-    $updatesToInstall = @()
+# Download the HPIA installer
+Write-Host "Downloading HPIA installer..."
+$url = "<https://ftp.ext.hp.com/pub/caps-softpaq/cmit/HPIA.html>"
+Invoke-WebRequest -Uri $url -OutFile "$hpiaFolder\\Files\\hp-hpia-5.1.7.exe"
 
-    # Filter out Windows 11 updates
-    $allUpdates = $importantUpdates.Updates + $optionalUpdates.Updates
-    foreach ($update in $allUpdates) {
-        if ($update.Title -notmatch "Windows 11") {
-            $updatesToInstall += $update
-        }
+# Install HPIA using the PowerShell App Deployment Toolkit
+Write-Host "Installing HPIA using the PowerShell App Deployment Toolkit..."
+Set-Location $hpiaFolder
+$deploymentType = "Install"
+$deployMode = "NonInteractive"
+$deployScript = Join-Path $hpiaFolder "Deploy-HPIA.ps1"
+
+@"
+[ScriptBlock]::Create('
+    [CmdletBinding()]
+    Param()
+
+    If ((Get-Process -Id $PID).SessionId -ne (Get-Process -Name "explorer" -ErrorAction SilentlyContinue).SessionId) {
+        $deployMode = "NonInteractive"
     }
 
-    if ($updatesToInstall.Count -gt 0) {
-        Write-Host "Installing updates..."
-        $downloader = $updateSession.CreateUpdateDownloader()
-        $downloader.Updates = $updatesToInstall
-        $downloader.Download()
-        $installer = $updateSession.CreateUpdateInstaller()
-        $installer.Updates = $updatesToInstall
-        $installationResult = $installer.Install()
-        Write-Host "Installation result: $($installationResult.ResultCode)"
-    } else {
-        Write-Host "No applicable updates found."
+    ##*===============================================
+    ##* PRE-INSTALLATION
+    ##*===============================================
+    function PreInstallation {
+        # Set the installation file path
+        $installerPath = Join-Path $dirFiles "hp-hpia-5.1.7.exe"
+
+        # Set the installation arguments
+        $installerArgs = "/s /v/qn"
+
+        # Execute the installation
+        Execute-Process -Path $installerPath -Parameters $installerArgs -IgnoreExitCodes "3010" -WindowStyle Hidden
     }
-} else {
-    Write-Host "Windows is up to date."
-}
+
+    ##*===============================================
+    ##* POST-INSTALLATION
+    ##*===============================================
+    function PostInstallation {
+        # Add a shortcut to the Start Menu
+        $startMenuShortcutPath = Join-Path $dirCommonStartMenu "HP Image Assistant.lnk"
+        $startMenuShortcutTarget = Join-Path $dirFiles "HPImageAssistant.exe"
+        $startMenuShortcutArguments = ""
+        $startMenuShortcutWorkingDirectory = $dirFiles
+        $startMenuShortcutDescription = "HP Image Assistant"
+
+        New-Shortcut -Path $startMenuShortcutPath -TargetPath $startMenuShortcutTarget -Arguments $startMenuShortcutArguments -WorkingDirectory $startMenuShortcutWorkingDirectory -Description $startMenuShortcutDescription
+    }
+
+    ##*===============================================
+    ##* MAIN ENTRY POINT
+    ##*===============================================
+    ["
+    $deployScriptContent = Get-Content $deployScript
+    $deployScriptContent = $deployScriptContent -replace '\\[Pre-Installation\\]', '[Pre-Installation]; PreInstallation'
+    $deployScriptContent = $deployScriptContent -replace '\\[Post-Installation\\]', '[Post-Installation]; PostInstallation'
+    $deployScriptContent = $deployScriptContent -replace '\\[Exit-Script\\]', '[Exit-Script]'
+
+    $deployScriptContent | Out-File $deployScript -Encoding UTF8
+"@
+Invoke-Expression $deployScript
+
